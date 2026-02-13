@@ -43,8 +43,10 @@ add_action( 'admin_enqueue_scripts', function ( $hook_suffix ) {
 		#uu-widget-tracker-results { margin-top: 16px; }
 		#uu-widget-tracker-results .uu-widget-tracker-error { color: #d63638; }
 	' );
-	$script_url = plugin_dir_url( __FILE__ ) . 'js/dashboard.js';
-	wp_enqueue_script( 'uu-widget-tracker-dashboard', $script_url, array(), UU_WIDGET_TRACKER_DASHBOARD_VERSION, true );
+	$script_url  = plugin_dir_url( __FILE__ ) . 'js/dashboard.js';
+	$script_path = plugin_dir_path( __FILE__ ) . 'js/dashboard.js';
+	$script_ver  = file_exists( $script_path ) ? (string) filemtime( $script_path ) : UU_WIDGET_TRACKER_DASHBOARD_VERSION;
+	wp_enqueue_script( 'uu-widget-tracker-dashboard', $script_url, array(), $script_ver, true );
 	wp_add_inline_script( 'uu-widget-tracker-dashboard', 'var uuWidgetTrackerDashboard = ' . wp_json_encode( array(
 		'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 		'nonce'   => wp_create_nonce( 'uu_widget_tracker_dashboard_fetch' ),
@@ -61,14 +63,42 @@ add_action( 'admin_init', function () {
 	register_setting( 'uu_widget_tracker_dashboard', UU_WIDGET_TRACKER_DASHBOARD_OPTION, array(
 		'type'              => 'string',
 		'sanitize_callback' => function ( $value ) {
-			$urls = array_filter( array_map( 'trim', explode( "\n", is_string( $value ) ? $value : '' ) ) );
-			$urls = array_filter( $urls, function ( $url ) {
-				return $url !== '' && ( wp_http_validate_url( $url ) !== false || preg_match( '#^https?://#', $url ) );
-			} );
-			return implode( "\n", $urls );
+			$raw   = is_string( $value ) ? $value : '';
+			$raw   = str_replace( array( "\r\n", "\r" ), "\n", $raw );
+			$lines = array_filter( array_map( 'trim', explode( "\n", $raw ) ) );
+			$keep  = array();
+			foreach ( $lines as $line ) {
+				if ( $line === '' ) {
+					continue;
+				}
+				// Already has scheme and validates, or at least starts with http(s)://
+				if ( preg_match( '#^https?://#i', $line ) ) {
+					$keep[] = $line;
+					continue;
+				}
+				// Hostname-only (e.g. site.utah.edu): normalize to https so fetch works
+				if ( preg_match( '#^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$#i', $line ) && strpos( $line, ' ' ) === false ) {
+					$keep[] = 'https://' . $line;
+					continue;
+				}
+				// Allow any other non-empty line (e.g. with path, or odd but valid); try adding https:// for use
+				$with_scheme = ( preg_match( '#^[a-z0-9]#i', $line ) && strpos( $line, ' ' ) === false ) ? 'https://' . $line : $line;
+				$keep[] = $with_scheme;
+			}
+			return implode( "\n", array_unique( $keep ) );
 		},
 	) );
 } );
+
+/**
+ * Default max execution time (seconds) for the fetch AJAX request. Use filter to override.
+ *
+ * @return int 0 = no limit (if allowed by server), or seconds.
+ */
+function uu_widget_tracker_dashboard_fetch_time_limit() {
+	$limit = (int) apply_filters( 'uu_widget_tracker_dashboard_fetch_time_limit', 600 );
+	return max( 0, $limit );
+}
 
 /**
  * AJAX: run fetch and return JSON (so fetch only runs on button click, not page load).
@@ -82,17 +112,71 @@ add_action( 'wp_ajax_uu_widget_tracker_dashboard_fetch', function () {
 		wp_send_json_error( array( 'message' => __( 'Please select a widget.', 'uu-widget-tracker-dashboard' ) ) );
 	}
 	$option_value = get_option( UU_WIDGET_TRACKER_DASHBOARD_OPTION, '' );
-	$site_urls    = array_filter( array_map( 'trim', explode( "\n", $option_value ) ) );
+	$site_urls    = array_values( array_filter( array_map( 'trim', explode( "\n", $option_value ) ) ) );
 	if ( empty( $site_urls ) ) {
 		wp_send_json_error( array( 'message' => __( 'Add and save site URLs above first.', 'uu-widget-tracker-dashboard' ) ) );
 	}
-	$results = array();
-	foreach ( $site_urls as $base_url ) {
+
+	$total_sites = count( $site_urls );
+	$offset      = isset( $_POST['offset'] ) ? max( 0, (int) $_POST['offset'] ) : 0;
+	$batch_size = isset( $_POST['batch_size'] ) ? min( 50, max( 5, (int) $_POST['batch_size'] ) ) : 20;
+	$batch      = array_slice( $site_urls, $offset, $batch_size );
+
+	$time_limit_seconds = uu_widget_tracker_dashboard_fetch_time_limit();
+	$previous_limit     = ini_get( 'max_execution_time' );
+	if ( $time_limit_seconds > 0 ) {
+		@set_time_limit( $time_limit_seconds );
+	} else {
+		@set_time_limit( 0 );
+	}
+
+	$start_time   = microtime( true );
+	$results      = array();
+	$sites_ok     = 0;
+	$sites_error  = 0;
+	$total_posts  = 0;
+
+	foreach ( $batch as $base_url ) {
 		$base_url = untrailingslashit( trailingslashit( trim( $base_url ) ) );
 		$result   = uu_widget_tracker_dashboard_fetch_site( $base_url, $widget );
 		$results[] = array( 'url' => $base_url, 'data' => $result );
+		if ( isset( $result['error'] ) ) {
+			$sites_error++;
+		} else {
+			$sites_ok++;
+			$posts = isset( $result['posts'] ) && is_array( $result['posts'] ) ? $result['posts'] : array();
+			$total_posts += count( $posts );
+		}
 	}
-	wp_send_json_success( array( 'widget' => $widget, 'results' => $results ) );
+
+	$error_urls   = array();
+	foreach ( $results as $item ) {
+		if ( ! empty( $item['data']['error'] ) ) {
+			$error_urls[] = array( 'url' => $item['url'], 'message' => $item['data']['error'] );
+		}
+	}
+
+	$execution_time = round( microtime( true ) - $start_time, 2 );
+	$processed      = count( $results );
+	$has_more       = ( $offset + $processed ) < $total_sites;
+	$next_offset    = $offset + $processed;
+
+	$debug = array(
+		'total_sites'            => $total_sites,
+		'offset'                 => $offset,
+		'processed'              => $processed,
+		'has_more'                => $has_more,
+		'next_offset'             => $has_more ? $next_offset : null,
+		'sites_ok'                => $sites_ok,
+		'sites_error'             => $sites_error,
+		'execution_time_seconds'  => $execution_time,
+		'php_time_limit_set'      => $time_limit_seconds,
+		'php_time_limit_was'      => $previous_limit ? (int) $previous_limit : null,
+		'total_posts_found'       => $total_posts,
+		'error_urls'              => $error_urls,
+	);
+
+	wp_send_json_success( array( 'widget' => $widget, 'results' => $results, 'debug' => $debug ) );
 } );
 
 /**
