@@ -95,6 +95,7 @@
 		});
 		var heading = 'Results' + (widgetSlug ? ' — ' + escHtml(widgetSlug) : '');
 		var html = buildDebugHtml(debug) + '<h2>' + heading + '</h2>' +
+			'<p><button type="button" class="button" id="uu-tracker-export-csv" data-widget="' + escAttr(widgetSlug || '') + '">Export CSV</button></p>' +
 			'<table class="wp-list-table widefat fixed striped uu-widget-tracker-results-table">' +
 			'<thead><tr><th class="uu-tracker-sortable" data-col="0">Site name</th><th class="uu-tracker-sortable" data-col="1">Multisite name</th><th class="uu-tracker-sortable" data-col="2">Post title</th><th class="uu-tracker-sortable" data-col="3">Post type</th><th class="uu-tracker-sortable" data-col="4">' + escHtml(viewLabel) + '</th></tr></thead>' +
 			'<tbody>' + rows.join('') + '</tbody></table>';
@@ -138,6 +139,46 @@
 				errorRows.forEach(function (tr) { tbody.appendChild(tr); });
 			});
 		});
+	}
+
+	function csvEscape(str) {
+		if (str == null) return '';
+		str = String(str);
+		if (/[",\n\r]/.test(str)) {
+			return '"' + str.replace(/"/g, '""') + '"';
+		}
+		return str;
+	}
+
+	function exportTableToCsv(tableEl, filename) {
+		var ths = tableEl.querySelectorAll('thead th.uu-tracker-sortable');
+		if (!ths.length) return;
+		var headers = [];
+		for (var i = 0; i < ths.length; i++) {
+			var label = ths[i].textContent.replace(/\s[\u2191\u2193]$/, '').trim();
+			headers.push(label === 'View' ? 'Page URL' : label);
+		}
+		var lines = [ headers.map(csvEscape).join(',') ];
+		var rows = tableEl.querySelectorAll('tbody tr');
+		for (var r = 0; r < rows.length; r++) {
+			var tr = rows[r];
+			if (tr.cells.length !== 5) continue;
+			var cells = [];
+			for (var c = 0; c < tr.cells.length; c++) {
+				var cell = tr.cells[c];
+				var link = cell.querySelector('a[href]');
+				var val = link ? link.getAttribute('href') : cell.textContent.trim();
+				cells.push(csvEscape(val));
+			}
+			lines.push(cells.join(','));
+		}
+		var csv = lines.join('\r\n');
+		var blob = new Blob([ csv ], { type: 'text/csv;charset=utf-8' });
+		var a = document.createElement('a');
+		a.href = URL.createObjectURL(blob);
+		a.download = filename || 'uu-widget-usage-export.csv';
+		a.click();
+		URL.revokeObjectURL(a.href);
 	}
 
 	var form = document.getElementById('uu-widget-tracker-fetch-form');
@@ -237,6 +278,14 @@
 						resultsEl.innerHTML = buildResultsHtml(widgetSlugForResults, allResults, combinedDebug);
 						var table = resultsEl.querySelector('.uu-widget-tracker-results-table');
 						if (table) attachTableSort(table);
+						var exportBtn = resultsEl.querySelector('#uu-tracker-export-csv');
+						if (exportBtn) {
+							exportBtn.addEventListener('click', function () {
+								var widget = exportBtn.getAttribute('data-widget') || 'widget';
+								var date = new Date().toISOString().slice(0, 10);
+								exportTableToCsv(table, 'uu-widget-usage-' + widget + '-' + date + '.csv');
+							});
+						}
 					}
 				}).catch(function () {
 					spinnerWrap.classList.remove('is-active');
