@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: UU Widget Tracker Dashboard
- * Description: Central dashboard to find which pages use UU SiteOrigin widgets across multiple sites. Configure site URLs and query the uu-widget-tracker REST API on each site.
+ * Description: Central dashboard to find which pages use U of U widgets and plugins across multiple sites. Configure site URLs and query the uu-widget-tracker REST API on each site.
  * Version: 1.0.0
  * Author: UMC Digital
  *
@@ -20,8 +20,8 @@ define( 'UU_WIDGET_TRACKER_DASHBOARD_OPTION', 'uu_widget_tracker_dashboard_sites
  */
 add_action( 'admin_menu', function () {
 	add_management_page(
-		__( 'UU Widget Usage', 'uu-widget-tracker-dashboard' ),
-		__( 'UU Widget Usage', 'uu-widget-tracker-dashboard' ),
+		__( 'UU Usage', 'uu-widget-tracker-dashboard' ),
+		__( 'UU Usage', 'uu-widget-tracker-dashboard' ),
 		'manage_options',
 		'uu-widget-tracker-dashboard',
 		'uu_widget_tracker_dashboard_render_page'
@@ -53,7 +53,7 @@ add_action( 'admin_enqueue_scripts', function ( $hook_suffix ) {
 		'i18n'    => array(
 			'fetching' => __( 'Fetching usage…', 'uu-widget-tracker-dashboard' ),
 			'error'    => __( 'Request failed.', 'uu-widget-tracker-dashboard' ),
-			'noPosts'  => __( 'No posts using this widget.', 'uu-widget-tracker-dashboard' ),
+			'noPosts'  => __( 'No posts using this item.', 'uu-widget-tracker-dashboard' ),
 			'view'     => __( 'View', 'uu-widget-tracker-dashboard' ),
 		),
 	) ) . ';', 'before' );
@@ -109,7 +109,7 @@ add_action( 'wp_ajax_uu_widget_tracker_dashboard_fetch', function () {
 	}
 	$widget = isset( $_POST['widget'] ) ? sanitize_text_field( wp_unslash( $_POST['widget'] ) ) : '';
 	if ( $widget === '' ) {
-		wp_send_json_error( array( 'message' => __( 'Please select a widget.', 'uu-widget-tracker-dashboard' ) ) );
+		wp_send_json_error( array( 'message' => __( 'Please select a tracked item.', 'uu-widget-tracker-dashboard' ) ) );
 	}
 	$option_value = get_option( UU_WIDGET_TRACKER_DASHBOARD_OPTION, '' );
 	$site_urls    = array_values( array_filter( array_map( 'trim', explode( "\n", $option_value ) ) ) );
@@ -217,7 +217,7 @@ function uu_widget_tracker_dashboard_fetch_site( $base_url, $widget_slug = null 
 }
 
 /**
- * Get widget list from this site (for dropdown). Requires U of U / SiteOrigin Widgets plugin to be active on the dashboard site.
+ * Get tracked item list from this site (for dropdown). Requires the tracker plugin to be active on the dashboard site.
  *
  * @return array<array{slug: string, class: string}> Empty if tracker not available.
  */
@@ -225,15 +225,27 @@ function uu_widget_tracker_dashboard_get_local_widget_list() {
 	if ( ! class_exists( 'UU_Widget_Usage_Tracker' ) ) {
 		return array();
 	}
+
+	if ( method_exists( 'UU_Widget_Usage_Tracker', 'get_usage_items' ) ) {
+		$list = UU_Widget_Usage_Tracker::get_usage_items();
+		usort( $list, function ( $a, $b ) {
+			return strnatcasecmp( $a['slug'], $b['slug'] );
+		} );
+		return $list;
+	}
+
 	$map = UU_Widget_Usage_Tracker::get_uu_widget_class_to_slug_map();
-	// One entry per unique slug (map has both UU_* and U_Of_U_* class names per slug).
 	$slugs = array_unique( array_values( $map ) );
 	sort( $slugs, SORT_NATURAL );
-	$list = array();
-	foreach ( $slugs as $slug ) {
-		$list[] = array( 'slug' => $slug, 'class' => '' );
-	}
-	return $list;
+
+	return array_map( function ( $slug ) {
+		return array(
+			'slug'  => $slug,
+			'class' => '',
+			'label' => $slug,
+			'kind'  => 'siteorigin_class',
+		);
+	}, $slugs );
 }
 
 /**
@@ -243,12 +255,12 @@ function uu_widget_tracker_dashboard_render_page() {
 	$option_value = get_option( UU_WIDGET_TRACKER_DASHBOARD_OPTION, '' );
 	$site_urls    = array_filter( array_map( 'trim', explode( "\n", $option_value ) ) );
 
-	// Widget list for dropdown: from this site (dashboard) when uu-so-widgets plugin is active.
+	// Tracked item list for dropdown: from this site (dashboard) when the tracker plugin is active.
 	$widgets_list = uu_widget_tracker_dashboard_get_local_widget_list();
 
 	?>
 	<div class="wrap">
-		<h1><?php esc_html_e( 'UU Widget Usage', 'uu-widget-tracker-dashboard' ); ?></h1>
+		<h1><?php esc_html_e( 'UU Usage', 'uu-widget-tracker-dashboard' ); ?></h1>
 
 		<form method="post" action="<?php echo esc_url( admin_url( 'options.php' ) ); ?>" style="max-width: 800px; margin-bottom: 24px;">
 			<?php settings_fields( 'uu_widget_tracker_dashboard' ); ?>
@@ -257,7 +269,7 @@ function uu_widget_tracker_dashboard_render_page() {
 					<th scope="row"><label for="uu_widget_tracker_sites"><?php esc_html_e( 'Site URLs', 'uu-widget-tracker-dashboard' ); ?></label></th>
 					<td>
 						<textarea name="<?php echo esc_attr( UU_WIDGET_TRACKER_DASHBOARD_OPTION ); ?>" id="uu_widget_tracker_sites" rows="6" class="large-text code"><?php echo esc_textarea( $option_value ); ?></textarea>
-						<p class="description"><?php esc_html_e( 'One URL per line (e.g. https://example.utah.edu). These sites must have the UU SiteOrigin Widgets plugin with the widget usage tracker. For multisite, include the main site and each subsite you want to search.', 'uu-widget-tracker-dashboard' ); ?></p>
+						<p class="description"><?php esc_html_e( 'One URL per line (e.g. https://example.utah.edu). These sites must have the tracker plugin enabled so the dashboard can ask for widget and plugin usage data.', 'uu-widget-tracker-dashboard' ); ?></p>
 					</td>
 				</tr>
 			</table>
@@ -266,20 +278,20 @@ function uu_widget_tracker_dashboard_render_page() {
 
 		<hr />
 
-		<h2><?php esc_html_e( 'Find widget usage', 'uu-widget-tracker-dashboard' ); ?></h2>
+		<h2><?php esc_html_e( 'Find usage', 'uu-widget-tracker-dashboard' ); ?></h2>
 		<form id="uu-widget-tracker-fetch-form">
 			<p>
-				<label for="uu_widget_slug"><?php esc_html_e( 'Widget slug', 'uu-widget-tracker-dashboard' ); ?></label>
+				<label for="uu_widget_slug"><?php esc_html_e( 'Tracked slug', 'uu-widget-tracker-dashboard' ); ?></label>
 				<?php if ( ! empty( $widgets_list ) ) : ?>
 					<select name="widget" id="uu_widget_slug" required>
 						<option value=""><?php esc_html_e( '— Select —', 'uu-widget-tracker-dashboard' ); ?></option>
 						<?php foreach ( $widgets_list as $w ) : ?>
-							<option value="<?php echo esc_attr( $w['slug'] ); ?>"><?php echo esc_html( $w['slug'] ); ?></option>
+							<option value="<?php echo esc_attr( $w['slug'] ); ?>"><?php echo esc_html( ! empty( $w['label'] ) ? $w['label'] : $w['slug'] ); ?></option>
 						<?php endforeach; ?>
 					</select>
 				<?php else : ?>
-					<input type="text" name="widget" id="uu_widget_slug" placeholder="uu-accordion-widget, uu-marquee-widget, …" class="regular-text" required />
-					<span class="description"><?php esc_html_e( 'Install and activate the U of U / SiteOrigin Widgets plugin on this dashboard site to show the widget dropdown; otherwise type the slug manually.', 'uu-widget-tracker-dashboard' ); ?></span>
+					<input type="text" name="widget" id="uu_widget_slug" placeholder="uu-accordion-widget, uu-available-technologies, …" class="regular-text" required />
+					<span class="description"><?php esc_html_e( 'Install and activate the tracker plugin on this dashboard site to show the dropdown; otherwise type the slug manually.', 'uu-widget-tracker-dashboard' ); ?></span>
 				<?php endif; ?>
 			</p>
 			<p>
