@@ -190,7 +190,10 @@
 	form.addEventListener('submit', function (e) {
 		e.preventDefault();
 		var slugField = document.getElementById('uu_widget_slug');
-		var widget = slugField ? (slugField.value || '').trim() : '';
+		var customSlugField = document.getElementById('uu_widget_slug_custom');
+		var widget = customSlugField && (customSlugField.value || '').trim()
+			? (customSlugField.value || '').trim()
+			: (slugField ? (slugField.value || '').trim() : '');
 		if (!widget) return;
 
 		spinnerWrap.classList.add('is-active');

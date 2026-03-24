@@ -283,12 +283,14 @@ function uu_widget_tracker_dashboard_render_page() {
 			<p>
 				<label for="uu_widget_slug"><?php esc_html_e( 'Tracked slug', 'uu-widget-tracker-dashboard' ); ?></label>
 				<?php if ( ! empty( $widgets_list ) ) : ?>
-					<select name="widget" id="uu_widget_slug" required>
+					<select name="widget" id="uu_widget_slug">
 						<option value=""><?php esc_html_e( '— Select —', 'uu-widget-tracker-dashboard' ); ?></option>
 						<?php foreach ( $widgets_list as $w ) : ?>
 							<option value="<?php echo esc_attr( $w['slug'] ); ?>"><?php echo esc_html( ! empty( $w['label'] ) ? $w['label'] : $w['slug'] ); ?></option>
 						<?php endforeach; ?>
 					</select>
+					<span class="description" style="display:block; margin-top:8px;"><?php esc_html_e( 'Choose a known slug from this site, or type a custom slug below for a remote-only plugin.', 'uu-widget-tracker-dashboard' ); ?></span>
+					<input type="text" name="widget_custom" id="uu_widget_slug_custom" placeholder="uu-available-technologies, uu-law-directory, …" class="regular-text" style="margin-top:8px;" />
 				<?php else : ?>
 					<input type="text" name="widget" id="uu_widget_slug" placeholder="uu-accordion-widget, uu-available-technologies, …" class="regular-text" required />
 					<span class="description"><?php esc_html_e( 'Install and activate the tracker plugin on this dashboard site to show the dropdown; otherwise type the slug manually.', 'uu-widget-tracker-dashboard' ); ?></span>
