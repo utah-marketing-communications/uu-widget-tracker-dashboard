@@ -52,9 +52,22 @@ add_action( 'admin_enqueue_scripts', function ( $hook_suffix ) {
 		'nonce'   => wp_create_nonce( 'uu_widget_tracker_dashboard_fetch' ),
 		'i18n'    => array(
 			'fetching' => __( 'Fetching usage…', 'uu-widget-tracker-dashboard' ),
+			'fetchingCatalog' => __( 'Fetching tracked item list…', 'uu-widget-tracker-dashboard' ),
+			'auditing' => __( 'Auditing tracked items…', 'uu-widget-tracker-dashboard' ),
 			'error'    => __( 'Request failed.', 'uu-widget-tracker-dashboard' ),
-			'noPosts'  => __( 'No posts using this item.', 'uu-widget-tracker-dashboard' ),
+			'noPosts'  => __( 'No matching uses found for this item.', 'uu-widget-tracker-dashboard' ),
 			'view'     => __( 'View', 'uu-widget-tracker-dashboard' ),
+			'exportAuditCsv' => __( 'Export Audit CSV', 'uu-widget-tracker-dashboard' ),
+			'bulkAuditHeading' => __( 'Audit summary', 'uu-widget-tracker-dashboard' ),
+			'auditProgress' => __( 'Auditing item', 'uu-widget-tracker-dashboard' ),
+			'trackedItemsFound' => __( 'Tracked items discovered', 'uu-widget-tracker-dashboard' ),
+			'used' => __( 'Used', 'uu-widget-tracker-dashboard' ),
+			'noMatches' => __( 'No matches', 'uu-widget-tracker-dashboard' ),
+			'outOfScope' => __( 'Out of scope', 'uu-widget-tracker-dashboard' ),
+			'statusError' => __( 'Error', 'uu-widget-tracker-dashboard' ),
+			'confidenceHigh' => __( 'High', 'uu-widget-tracker-dashboard' ),
+			'confidenceMedium' => __( 'Medium', 'uu-widget-tracker-dashboard' ),
+			'confidenceLow' => __( 'Low', 'uu-widget-tracker-dashboard' ),
 		),
 	) ) . ';', 'before' );
 } );
@@ -101,6 +114,27 @@ function uu_widget_tracker_dashboard_fetch_time_limit() {
 }
 
 /**
+ * Get configured site URLs from the dashboard option.
+ *
+ * @return array<int, string>
+ */
+function uu_widget_tracker_dashboard_get_configured_site_urls() {
+	$option_value = get_option( UU_WIDGET_TRACKER_DASHBOARD_OPTION, '' );
+
+	return array_values( array_filter( array_map( 'trim', explode( "\n", $option_value ) ) ) );
+}
+
+/**
+ * Normalize a base URL for comparisons and fetches.
+ *
+ * @param string $base_url Raw base URL.
+ * @return string
+ */
+function uu_widget_tracker_dashboard_normalize_base_url( $base_url ) {
+	return untrailingslashit( trailingslashit( trim( (string) $base_url ) ) );
+}
+
+/**
  * AJAX: run fetch and return JSON (so fetch only runs on button click, not page load).
  */
 add_action( 'wp_ajax_uu_widget_tracker_dashboard_fetch', function () {
@@ -111,10 +145,20 @@ add_action( 'wp_ajax_uu_widget_tracker_dashboard_fetch', function () {
 	if ( $widget === '' ) {
 		wp_send_json_error( array( 'message' => __( 'Please select a tracked item.', 'uu-widget-tracker-dashboard' ) ) );
 	}
-	$option_value = get_option( UU_WIDGET_TRACKER_DASHBOARD_OPTION, '' );
-	$site_urls    = array_values( array_filter( array_map( 'trim', explode( "\n", $option_value ) ) ) );
+	$site_urls = uu_widget_tracker_dashboard_get_configured_site_urls();
 	if ( empty( $site_urls ) ) {
 		wp_send_json_error( array( 'message' => __( 'Add and save site URLs above first.', 'uu-widget-tracker-dashboard' ) ) );
+	}
+
+	$requested_site_url = isset( $_POST['site_url'] ) ? uu_widget_tracker_dashboard_normalize_base_url( sanitize_text_field( wp_unslash( $_POST['site_url'] ) ) ) : '';
+	if ( '' !== $requested_site_url ) {
+		$normalized_site_urls = array_map( 'uu_widget_tracker_dashboard_normalize_base_url', $site_urls );
+		$matching_index       = array_search( $requested_site_url, $normalized_site_urls, true );
+		if ( false === $matching_index ) {
+			wp_send_json_error( array( 'message' => __( 'Selected site URL is not in the saved site list.', 'uu-widget-tracker-dashboard' ) ) );
+		}
+
+		$site_urls = array( $normalized_site_urls[ $matching_index ] );
 	}
 
 	$total_sites = count( $site_urls );
@@ -180,6 +224,57 @@ add_action( 'wp_ajax_uu_widget_tracker_dashboard_fetch', function () {
 } );
 
 /**
+ * AJAX: fetch the remote tracked item list for each configured site URL.
+ */
+add_action( 'wp_ajax_uu_widget_tracker_dashboard_fetch_widget_catalog', function () {
+	if ( ! current_user_can( 'manage_options' ) || empty( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['nonce'] ) ), 'uu_widget_tracker_dashboard_fetch' ) ) {
+		wp_send_json_error( array( 'message' => __( 'Invalid request.', 'uu-widget-tracker-dashboard' ) ) );
+	}
+
+	$site_urls = uu_widget_tracker_dashboard_get_configured_site_urls();
+	if ( empty( $site_urls ) ) {
+		wp_send_json_error( array( 'message' => __( 'Add and save site URLs above first.', 'uu-widget-tracker-dashboard' ) ) );
+	}
+
+	$start_time  = microtime( true );
+	$results     = array();
+	$sites_ok    = 0;
+	$sites_error = 0;
+
+	foreach ( $site_urls as $base_url ) {
+		$base_url = uu_widget_tracker_dashboard_normalize_base_url( $base_url );
+		$result   = uu_widget_tracker_dashboard_fetch_site_widgets( $base_url );
+		$results[] = array( 'url' => $base_url, 'data' => $result );
+
+		if ( isset( $result['error'] ) ) {
+			$sites_error++;
+		} else {
+			$sites_ok++;
+		}
+	}
+
+	$error_urls = array();
+	foreach ( $results as $item ) {
+		if ( ! empty( $item['data']['error'] ) ) {
+			$error_urls[] = array( 'url' => $item['url'], 'message' => $item['data']['error'] );
+		}
+	}
+
+	wp_send_json_success(
+		array(
+			'results' => $results,
+			'debug'   => array(
+				'total_sites'           => count( $site_urls ),
+				'sites_ok'              => $sites_ok,
+				'sites_error'           => $sites_error,
+				'execution_time_seconds' => round( microtime( true ) - $start_time, 2 ),
+				'error_urls'            => $error_urls,
+			),
+		)
+	);
+} );
+
+/**
  * Fetch usage from a single site.
  *
  * @param string      $base_url Site base URL (no trailing slash).
@@ -187,7 +282,7 @@ add_action( 'wp_ajax_uu_widget_tracker_dashboard_fetch', function () {
  * @return array{error: string}|array{site_name: string, site_url: string, widget_slug: string|null, posts: array}
  */
 function uu_widget_tracker_dashboard_fetch_site( $base_url, $widget_slug = null ) {
-	$url = trailingslashit( $base_url ) . 'wp-json/uu-widget-tracker/v1/usage';
+	$url = trailingslashit( uu_widget_tracker_dashboard_normalize_base_url( $base_url ) ) . 'wp-json/uu-widget-tracker/v1/usage';
 	if ( $widget_slug !== null && $widget_slug !== '' ) {
 		$url = add_query_arg( 'widget', $widget_slug, $url );
 	}
@@ -211,6 +306,42 @@ function uu_widget_tracker_dashboard_fetch_site( $base_url, $widget_slug = null 
 	$data = json_decode( $body, true );
 	if ( ! is_array( $data ) ) {
 		return array( 'error' => 'Invalid JSON response' );
+	}
+
+	return $data;
+}
+
+/**
+ * Fetch the tracked item list from a single site.
+ *
+ * @param string $base_url Site base URL (no trailing slash).
+ * @return array{error: string}|array{widgets: array<int, array<string, mixed>>}
+ */
+function uu_widget_tracker_dashboard_fetch_site_widgets( $base_url ) {
+	$url = trailingslashit( uu_widget_tracker_dashboard_normalize_base_url( $base_url ) ) . 'wp-json/uu-widget-tracker/v1/widgets';
+
+	$response = wp_remote_get(
+		$url,
+		array(
+			'timeout' => 15,
+			'headers' => array( 'Accept' => 'application/json' ),
+		)
+	);
+
+	if ( is_wp_error( $response ) ) {
+		return array( 'error' => $response->get_error_message() );
+	}
+
+	$code = wp_remote_retrieve_response_code( $response );
+	$body = wp_remote_retrieve_body( $response );
+
+	if ( 200 !== $code ) {
+		return array( 'error' => "HTTP {$code}: " . substr( strip_tags( $body ), 0, 200 ) );
+	}
+
+	$data = json_decode( $body, true );
+	if ( ! is_array( $data ) || ! isset( $data['widgets'] ) || ! is_array( $data['widgets'] ) ) {
+		return array( 'error' => 'Invalid widgets response' );
 	}
 
 	return $data;
@@ -253,7 +384,6 @@ function uu_widget_tracker_dashboard_get_local_widget_list() {
  */
 function uu_widget_tracker_dashboard_render_page() {
 	$option_value = get_option( UU_WIDGET_TRACKER_DASHBOARD_OPTION, '' );
-	$site_urls    = array_filter( array_map( 'trim', explode( "\n", $option_value ) ) );
 
 	// Tracked item list for dropdown: from this site (dashboard) when the tracker plugin is active.
 	$widgets_list = uu_widget_tracker_dashboard_get_local_widget_list();
@@ -300,6 +430,14 @@ function uu_widget_tracker_dashboard_render_page() {
 				<?php submit_button( __( 'Fetch usage', 'uu-widget-tracker-dashboard' ), 'primary', '', false ); ?>
 			</p>
 		</form>
+
+		<h2><?php esc_html_e( 'Audit all tracked items', 'uu-widget-tracker-dashboard' ); ?></h2>
+		<p class="description" style="max-width: 800px;">
+			<?php esc_html_e( 'Run a bulk audit against every saved site URL. The dashboard will fetch each remote tracked slug, test it, and build a CSV summary with confidence and sample URLs. This can take a while on large multisite networks like Bryce.', 'uu-widget-tracker-dashboard' ); ?>
+		</p>
+		<p>
+			<button type="button" class="button button-secondary" id="uu-widget-tracker-audit-button"><?php esc_html_e( 'Audit all tracked items', 'uu-widget-tracker-dashboard' ); ?></button>
+		</p>
 
 		<div id="uu-widget-tracker-spinner-wrap" class="uu-widget-tracker-spinner-wrap" aria-hidden="true">
 			<span class="uu-widget-tracker-spinner"></span>
