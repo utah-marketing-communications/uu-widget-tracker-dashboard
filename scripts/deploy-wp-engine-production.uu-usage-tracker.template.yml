@@ -1,0 +1,95 @@
+name: PROD Deploy uu-usage-tracker to WP Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to deploy (include leading "v", e.g., v0.1.0)'
+        required: true
+
+jobs:
+  fetch-installs:
+    runs-on: ubuntu-latest
+    outputs:
+      production_envs: ${{ steps.setenvs.outputs.production_envs }}
+    steps:
+      - name: Fetch all installs from WP Engine API (with pagination)
+        id: fetch
+        run: |
+          offset=0
+          limit=100
+          echo "[]" > all_installs.json
+          while true; do
+            echo "Fetching installs offset=$offset..."
+            curl -s -u "${{ secrets.WPE_ORG_API_USER }}:${{ secrets.WPE_ORG_API_PASS }}" \
+              "https://api.wpengineapi.com/v1/installs?limit=$limit&offset=$offset" \
+              -o page.json
+            count=$(jq '.results // [] | length' page.json)
+            if [ "$count" -eq 0 ]; then
+              echo "No more results at offset=$offset, stopping."
+              break
+            fi
+            echo "Got $count installs (offset=$offset)"
+            jq -s '.[0] + (.[1].results // [])' all_installs.json page.json > merged.json
+            mv merged.json all_installs.json
+            offset=$((offset + limit))
+          done
+          total=$(jq 'length' all_installs.json)
+          echo "Fetched $total total installs from WP Engine API"
+
+      - name: Extract production environment names
+        id: setenvs
+        run: |
+          envs=$(jq -r '[.[] | select(.environment == "production") | .name] | @json' all_installs.json)
+          echo "production_envs=$envs" >> $GITHUB_OUTPUT
+
+  deploy-production:
+    needs: fetch-installs
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: ${{ fromJSON(needs.fetch-installs.outputs.production_envs) }}
+      max-parallel: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version }}
+          fetch-depth: 0
+
+      - name: Show checked-out ref
+        run: |
+          echo "Checked out ref: ${{ github.event.inputs.version }}"
+          git rev-parse --short HEAD
+          git describe --tags --exact-match 2>/dev/null || echo "No exact tag on HEAD"
+
+      - name: Ensure plugin directory exists
+        run: |
+          echo "${{ secrets.WPE_ORG_SSHG_KEY_PRIVATE }}" > $HOME/wpe_key
+          chmod 600 $HOME/wpe_key
+          ssh -o StrictHostKeyChecking=no -i $HOME/wpe_key \
+            wpe_gha+${{ matrix.env }}@${{ matrix.env }}.ssh.wpengine.net \
+            "mkdir -p sites/${{ matrix.env }}/wp-content/plugins/uu-usage-tracker"
+
+      - name: Deploy to WP Engine production
+        uses: wpengine/github-action-wpe-site-deploy@v3
+        with:
+          WPE_ENV: ${{ matrix.env }}
+          WPE_SSHG_KEY_PRIVATE: ${{ secrets.WPE_ORG_SSHG_KEY_PRIVATE }}
+          SRC_PATH: ./
+          REMOTE_PATH: wp-content/plugins/uu-usage-tracker/
+          PHP_LINT: true
+          CACHE_CLEAR: false
+          FLAGS: -azrv --inplace --exclude=".*" --exclude=".github"
+
+      - name: Set file permissions after deploy
+        run: |
+          echo "${{ secrets.WPE_ORG_SSHG_KEY_PRIVATE }}" > $HOME/wpe_key
+          chmod 600 $HOME/wpe_key
+          ssh -o StrictHostKeyChecking=no -i $HOME/wpe_key \
+            wpe_gha+${{ matrix.env }}@${{ matrix.env }}.ssh.wpengine.net \
+            "cd sites/${{ matrix.env }}/wp-content/plugins/uu-usage-tracker && \
+             find . -type d -print0 | xargs -0 chmod 775 && \
+             find . -type f -print0 | xargs -0 chmod 664"
+
+      - name: Log Deployment Summary
+        run: echo "Deployed uu-usage-tracker version ${{ github.event.inputs.version }} to WP Engine production (${{ matrix.env }}). Activation is handled separately in batches." >> $GITHUB_STEP_SUMMARY

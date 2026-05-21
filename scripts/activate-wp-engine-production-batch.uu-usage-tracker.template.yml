@@ -1,0 +1,56 @@
+name: PROD Activate uu-usage-tracker on WP Engine Batch
+
+on:
+  workflow_dispatch:
+    inputs:
+      envs:
+        description: 'Comma-separated production environment names to activate (max 5)'
+        required: true
+
+jobs:
+  validate-input:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.validate.outputs.envs }}
+    steps:
+      - name: Validate requested environment batch
+        id: validate
+        shell: bash
+        run: |
+          raw="${{ github.event.inputs.envs }}"
+          json=$(printf '%s' "$raw" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))')
+          count=$(printf '%s' "$json" | jq 'length')
+          if [ "$count" -eq 0 ]; then
+            echo "No environments were provided."
+            exit 1
+          fi
+          if [ "$count" -gt 5 ]; then
+            echo "Refusing to activate more than 5 environments in one batch."
+            exit 1
+          fi
+          echo "envs=$json" >> "$GITHUB_OUTPUT"
+
+  activate-batch:
+    needs: validate-input
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: ${{ fromJSON(needs.validate-input.outputs.envs) }}
+      max-parallel: 1
+    steps:
+      - name: Activate uu-usage-tracker on target install
+        shell: bash
+        run: |
+          echo "${{ secrets.WPE_ORG_SSHG_KEY_PRIVATE }}" > $HOME/wpe_key
+          chmod 600 $HOME/wpe_key
+          ssh -o StrictHostKeyChecking=no -i $HOME/wpe_key \
+            wpe_gha+${{ matrix.env }}@${{ matrix.env }}.ssh.wpengine.net \
+            "set -e && \
+             cd sites/${{ matrix.env }} && \
+             test -f wp-content/plugins/uu-usage-tracker/uu-usage-tracker.php && \
+             wp core is-installed >/dev/null 2>&1 && \
+             wp plugin is-installed uu-usage-tracker >/dev/null 2>&1 && \
+             (wp plugin is-active uu-usage-tracker >/dev/null 2>&1 || wp plugin activate uu-usage-tracker)"
+
+      - name: Log Activation Summary
+        run: echo "Activated uu-usage-tracker on ${{ matrix.env }}." >> $GITHUB_STEP_SUMMARY

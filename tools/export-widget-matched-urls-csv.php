@@ -1,0 +1,90 @@
+<?php
+/**
+ * Export one row per matched page URL from the widget registry.
+ *
+ * Usage:
+ * php tools/export-widget-matched-urls-csv.php \
+ *   --input=/abs/path/Widget_Audit.registry.v1.csv \
+ *   --output=/abs/path/Widget_Audit.report-matched-urls.v1.csv \
+ *   --map=/abs/path/multisite-map.json \
+ *   [--snapshot=/abs/path/report-usage-snapshot.json]
+ */
+
+if ( PHP_SAPI !== 'cli' ) {
+	fwrite( STDERR, "This script must be run from the command line.\n" );
+	exit( 1 );
+}
+
+require_once __DIR__ . '/audit-cli-common.php';
+require_once __DIR__ . '/report-runtime.php';
+
+$args = uu_audit_cli_parse_args( $argv );
+if ( empty( $args['input'] ) || empty( $args['output'] ) || empty( $args['map'] ) ) {
+	uu_audit_cli_usage( 'tools/export-widget-matched-urls-csv.php', '--input=/path/input.csv --output=/path/output.csv --map=/path/multisite-map.json' );
+	exit( 1 );
+}
+
+$input_file  = (string) $args['input'];
+$output_file = (string) $args['output'];
+$map_file    = (string) $args['map'];
+$snapshot_file = uu_report_snapshot_arg( $args );
+
+$map = uu_audit_load_map( $map_file );
+list( $header, $rows ) = uu_audit_load_csv_rows( $input_file );
+
+$output_header = array(
+	'Environment Label',
+	'Base URL',
+	'Canonical Slug',
+	'Preferred Label',
+	'Widget Type',
+	'Widget Class',
+	'Classic Widget ID',
+	'Bundle / Family',
+	'Plugin Activation',
+	'Site Name',
+	'Multisite Name',
+	'Blog ID',
+	'Post ID',
+	'Result Title',
+	'Result Type',
+	'Matched By',
+	'Permalink',
+	'Needs Review',
+	'Notes',
+	'Lookup Endpoint',
+	'Lookup Error',
+);
+
+$output_rows = array();
+$cache = uu_report_load_snapshot_cache( $snapshot_file );
+uu_report_each_widget_context(
+	$rows,
+	$map,
+	$cache,
+	function ( array $context ) use ( &$output_rows ) {
+		foreach ( uu_report_widget_matched_url_rows( $context ) as $output_row ) {
+			$output_rows[] = $output_row;
+		}
+	}
+);
+
+usort(
+	$output_rows,
+	function ( $left, $right ) {
+		$keys = array( 'Environment Label', 'Canonical Slug', 'Site Name', 'Result Title' );
+		foreach ( $keys as $key ) {
+			$compare = strnatcasecmp( (string) ( $left[ $key ] ?? '' ), (string) ( $right[ $key ] ?? '' ) );
+			if ( 0 !== $compare ) {
+				return $compare;
+			}
+		}
+
+		return 0;
+	}
+);
+
+uu_audit_write_csv_rows( $output_file, $output_header, $output_rows );
+uu_report_save_snapshot_cache( $snapshot_file, $cache );
+
+fwrite( STDOUT, 'Wrote widget matched URL CSV to ' . $output_file . ' (' . count( $output_rows ) . " rows)\n" );
