@@ -4,7 +4,7 @@
  *
  * Usage:
  * php tools/build-component-audit-reports.php \
- *   [--output-dir=/private/tmp] \
+ *   [--output-dir=/Users/brianthurber/Desktop/Component Audit] \
  *   [--prefix=Component_Audit] \
  *   [--aws-widget-summary=/abs/path/Widget_Audit.report-summary.v1.csv] \
  *   [--aws-plugin-summary=/abs/path/AWS_Plugin_Audit.report-summary.v1.csv] \
@@ -31,7 +31,7 @@ require_once __DIR__ . '/component-report-common.php';
 function uu_component_build_usage() {
 	$usage = <<<TXT
 Usage:
-  php tools/build-component-audit-reports.php [--output-dir=/private/tmp] [--prefix=Component_Audit]
+  php tools/build-component-audit-reports.php [--output-dir=/Users/brianthurber/Desktop/Component Audit] [--prefix=Component_Audit]
 
 Default source files:
   AWS widget summary:     /Users/brianthurber/Desktop/Widget Audit V1/Widget_Audit.report-summary.v1.csv
@@ -46,6 +46,7 @@ Default source files:
 Outputs:
   {output-dir}/{prefix}.report-summary.v1.csv
   {output-dir}/{prefix}.report-matched-urls.v1.csv
+  {output-dir}/{prefix}.report-matched-urls.standalone-plugins-only.v1.csv
 TXT;
 
 	fwrite( STDERR, $usage . "\n" );
@@ -65,6 +66,34 @@ function uu_component_arg_or_default( array $args, $key, $default ) {
 	}
 
 	return trim( (string) $args[ $key ] );
+}
+
+/**
+ * Ensure the chosen output directory exists and is writable.
+ *
+ * @param string $output_dir Directory path.
+ * @return string
+ */
+function uu_component_prepare_output_dir( $output_dir ) {
+	$output_dir = rtrim( trim( (string) $output_dir ), '/' );
+	if ( '' === $output_dir ) {
+		fwrite( STDERR, "Output directory cannot be empty.\n" );
+		exit( 1 );
+	}
+
+	if ( ! is_dir( $output_dir ) ) {
+		if ( ! mkdir( $output_dir, 0777, true ) && ! is_dir( $output_dir ) ) {
+			fwrite( STDERR, "Unable to create output directory: {$output_dir}\n" );
+			exit( 1 );
+		}
+	}
+
+	if ( ! is_writable( $output_dir ) ) {
+		fwrite( STDERR, "Output directory is not writable: {$output_dir}\n" );
+		exit( 1 );
+	}
+
+	return $output_dir;
 }
 
 /**
@@ -138,8 +167,9 @@ if ( isset( $args['help'] ) || isset( $args['h'] ) ) {
 	exit( 0 );
 }
 
-$output_dir = uu_component_arg_or_default( $args, 'output-dir', '/private/tmp' );
+$output_dir = uu_component_arg_or_default( $args, 'output-dir', '/Users/brianthurber/Desktop/Component Audit' );
 $prefix     = uu_component_arg_or_default( $args, 'prefix', 'Component_Audit' );
+$output_dir = uu_component_prepare_output_dir( $output_dir );
 
 $sources = array(
 	'aws-widget-summary'     => uu_component_arg_or_default( $args, 'aws-widget-summary', '/Users/brianthurber/Desktop/Widget Audit V1/Widget_Audit.report-summary.v1.csv' ),
@@ -159,6 +189,7 @@ foreach ( $sources as $key => $spec ) {
 
 $summary_output_file = rtrim( $output_dir, '/' ) . '/' . $prefix . '.report-summary.v1.csv';
 $matched_output_file = rtrim( $output_dir, '/' ) . '/' . $prefix . '.report-matched-urls.v1.csv';
+$plugin_only_output_file = rtrim( $output_dir, '/' ) . '/' . $prefix . '.report-matched-urls.standalone-plugins-only.v1.csv';
 
 $summary_header = array(
 	'Environment Family',
@@ -235,8 +266,19 @@ $matched_rows = array_merge(
 uu_component_sort_summary_rows( $summary_rows );
 uu_component_sort_matched_rows( $matched_rows );
 
+$plugin_only_matched_rows = array_values(
+	array_filter(
+		$matched_rows,
+		function ( $row ) {
+			return 'Standalone Plugin' === (string) ( $row['Component Type'] ?? '' );
+		}
+	)
+);
+
 uu_audit_write_csv_rows( $summary_output_file, $summary_header, $summary_rows );
 uu_audit_write_csv_rows( $matched_output_file, $matched_header, $matched_rows );
+uu_audit_write_csv_rows( $plugin_only_output_file, $matched_header, $plugin_only_matched_rows );
 
 fwrite( STDOUT, 'Wrote combined component summary CSV to ' . $summary_output_file . ' (' . count( $summary_rows ) . " rows)\n" );
 fwrite( STDOUT, 'Wrote combined component matched URL CSV to ' . $matched_output_file . ' (' . count( $matched_rows ) . " rows)\n" );
+fwrite( STDOUT, 'Wrote standalone-plugin-only matched URL CSV to ' . $plugin_only_output_file . ' (' . count( $plugin_only_matched_rows ) . " rows)\n" );

@@ -135,6 +135,9 @@ Filename pattern:
 Current file:
 - `Component_Audit.report-summary.v1.csv`
 
+Recommended default output folder:
+- `Desktop/Component Audit/`
+
 ### Combined component matched URL report
 Purpose:
 - one row per exact matched page URL across widgets and standalone plugins
@@ -145,6 +148,23 @@ Filename pattern:
 
 Current file:
 - `Component_Audit.report-matched-urls.v1.csv`
+
+Recommended default output folder:
+- `Desktop/Component Audit/`
+
+### Standalone-plugin-only matched URL report
+Purpose:
+- one row per exact matched page URL for standalone plugins only
+- makes the plugin-only page footprint easy to review without widget rows overwhelming the file
+
+Filename pattern:
+- `Component_Audit.report-matched-urls.standalone-plugins-only.v#.csv`
+
+Current file:
+- `Component_Audit.report-matched-urls.standalone-plugins-only.v1.csv`
+
+Recommended default output folder:
+- `Desktop/Component Audit/`
 
 ## Recommended Request Language
 
