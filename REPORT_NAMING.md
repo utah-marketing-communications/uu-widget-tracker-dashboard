@@ -121,6 +121,31 @@ Current file:
 - `AWS_Plugin_Audit.report-blog-activation-details.v1.csv`
 - `WP_Engine_Standalone_Plugin_Audit.report-blog-activation-details.v1.csv`
 
+## Combined Component Reports
+
+### Combined component summary report
+Purpose:
+- one row per tracked component per environment
+- merges widgets and standalone plugins across AWS and WP Engine
+- serves as the combined decision sheet
+
+Filename pattern:
+- `Component_Audit.report-summary.v#.csv`
+
+Current file:
+- `Component_Audit.report-summary.v1.csv`
+
+### Combined component matched URL report
+Purpose:
+- one row per exact matched page URL across widgets and standalone plugins
+- merges AWS and WP Engine page-level findings into one source-of-truth file
+
+Filename pattern:
+- `Component_Audit.report-matched-urls.v#.csv`
+
+Current file:
+- `Component_Audit.report-matched-urls.v1.csv`
+
 ## Recommended Request Language
 
 Use these exact phrases when asking for a rerun:
@@ -133,6 +158,8 @@ Use these exact phrases when asking for a rerun:
 - `run the standalone plugin summary report`
 - `run the standalone plugin matched URL report`
 - `run the standalone plugin blog activation detail report`
+- `run the combined component summary report`
+- `run the combined component matched URL report`
 
 ## Practical Interpretation
 
