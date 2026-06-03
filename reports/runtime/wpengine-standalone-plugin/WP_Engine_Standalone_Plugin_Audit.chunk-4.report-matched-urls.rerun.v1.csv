@@ -1,0 +1,2 @@
+Multisite,"Plugin Folder","Tracked Item Slug",Category,"Signal Type","Plugin Activation","Site Name","Multisite Name","Blog ID","Post ID","Result Title","Result Type","Matched By",Permalink,"Lookup Endpoint","Lookup Error"
+science.utah.edu,uu-available-technologies,uu-available-technologies,"Standalone plugin","shortcode + page slug","Inactive on scanned blogs","College of Science",,1,,invention-disclosure,,page_slug,https://science.utah.edu/invention-disclosure/,https://science.utah.edu/wp-json/uu-usage-tracker/v1/usage?item=uu-available-technologies,

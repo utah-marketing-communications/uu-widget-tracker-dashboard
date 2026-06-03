@@ -136,7 +136,7 @@ Current file:
 - `Component_Audit.report-summary.v1.csv`
 
 Recommended default output folder:
-- `Desktop/Component Audit/`
+- `Desktop/Component Audit - YYYY-MM-DD HH.MM.SS/`
 
 ### Combined component matched URL report
 Purpose:
@@ -150,7 +150,7 @@ Current file:
 - `Component_Audit.report-matched-urls.v1.csv`
 
 Recommended default output folder:
-- `Desktop/Component Audit/`
+- `Desktop/Component Audit - YYYY-MM-DD HH.MM.SS/`
 
 ### Standalone-plugin-only matched URL report
 Purpose:
@@ -164,7 +164,19 @@ Current file:
 - `Component_Audit.report-matched-urls.standalone-plugins-only.v1.csv`
 
 Recommended default output folder:
-- `Desktop/Component Audit/`
+- `Desktop/Component Audit - YYYY-MM-DD HH.MM.SS/`
+
+## Intermediate Runtime Artifacts
+
+Purpose:
+- stable non-Desktop storage for chunked or rerun source CSVs that feed the combined builder
+- avoids reliance on `/private/tmp` for important intermediate inputs
+
+Recommended runtime folder:
+- `uu-widget-tracker-dashboard/reports/runtime/`
+
+Recommended WP Engine standalone plugin runtime folder:
+- `uu-widget-tracker-dashboard/reports/runtime/wpengine-standalone-plugin/`
 
 ## Recommended Request Language
 
