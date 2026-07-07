@@ -293,6 +293,7 @@ $summary_header = array(
 	'Signal Type',
 	'Environment Count',
 	'Seen In',
+	'Usage Status',
 	'Plugin Activation',
 	'Matches Found',
 	'Confidence',

@@ -33,6 +33,7 @@ $map = uu_audit_load_map( $map_file );
 list( $header, $rows ) = uu_audit_load_csv_rows( $input_file );
 
 $required_extra_columns = array(
+	'Usage Status',
 	'Plugin Activation',
 	'Matches Found',
 	'Confidence',

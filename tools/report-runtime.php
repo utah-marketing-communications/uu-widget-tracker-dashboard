@@ -163,6 +163,40 @@ if ( ! function_exists( 'uu_report_remote_item_defined' ) ) {
 	}
 }
 
+if ( ! function_exists( 'uu_report_remote_item_for_slug' ) ) {
+	/**
+	 * Return one item from the remote tracker catalog by slug.
+	 *
+	 * @param array<string, mixed>|null $remote_data Remote items payload data.
+	 * @param string                    $item_slug   Item slug/key.
+	 * @return array<string, mixed>
+	 */
+	function uu_report_remote_item_for_slug( $remote_data, $item_slug ) {
+		if ( ! is_array( $remote_data ) ) {
+			return array();
+		}
+
+		$item_slug = trim( (string) $item_slug );
+		if ( '' === $item_slug ) {
+			return array();
+		}
+
+		foreach ( array( 'items', 'widgets' ) as $catalog_key ) {
+			if ( empty( $remote_data[ $catalog_key ] ) || ! is_array( $remote_data[ $catalog_key ] ) ) {
+				continue;
+			}
+
+			foreach ( $remote_data[ $catalog_key ] as $item ) {
+				if ( is_array( $item ) && isset( $item['slug'] ) && $item_slug === trim( (string) $item['slug'] ) ) {
+					return $item;
+				}
+			}
+		}
+
+		return array();
+	}
+}
+
 if ( ! function_exists( 'uu_report_build_plugin_context' ) ) {
 	/**
 	 * Build a normalized standalone-plugin usage context for one CSV row.
@@ -182,6 +216,7 @@ if ( ! function_exists( 'uu_report_build_plugin_context' ) ) {
 			'base_url'            => '',
 			'items_payload'       => array( 'url' => '', 'data' => null, 'error' => '' ),
 			'remote_item_defined' => null,
+			'remote_item'         => array(),
 			'payload'             => array( 'url' => '', 'data' => null, 'error' => '' ),
 			'data'                => array(),
 			'lookup_error'        => '',
@@ -205,6 +240,7 @@ if ( ! function_exists( 'uu_report_build_plugin_context' ) ) {
 				$context['lookup_error'] = 'Tracked item is not defined by remote tracker';
 				return $context;
 			}
+			$context['remote_item'] = uu_report_remote_item_for_slug( $context['items_payload']['data'], $item_slug );
 		}
 
 		$context['payload']  = uu_report_fetch_usage_cached( $cache, $context['base_url'], $item_slug );
@@ -570,6 +606,105 @@ if ( ! function_exists( 'uu_report_default_action' ) ) {
 	}
 }
 
+if ( ! function_exists( 'uu_report_plugin_context_signal_strength' ) ) {
+	/**
+	 * Return normalized standalone-plugin signal strength for a report context.
+	 *
+	 * @param array<string, mixed> $context Normalized plugin context.
+	 * @return string strong, medium, weak, or missing.
+	 */
+	function uu_report_plugin_context_signal_strength( array $context ) {
+		$remote_item = isset( $context['remote_item'] ) && is_array( $context['remote_item'] ) ? $context['remote_item'] : array();
+		if ( ! empty( $remote_item['signal_strength'] ) ) {
+			$signal_strength = strtolower( preg_replace( '/[^a-z0-9_-]/', '', (string) $remote_item['signal_strength'] ) );
+			if ( in_array( $signal_strength, array( 'strong', 'medium', 'weak', 'missing' ), true ) ) {
+				return $signal_strength;
+			}
+		}
+
+		$row         = isset( $context['row'] ) && is_array( $context['row'] ) ? $context['row'] : array();
+		$signal_type = (string) ( $row['Signal Type'] ?? '' );
+		if ( '' === trim( $signal_type ) ) {
+			return 'missing';
+		}
+
+		$strength = uu_report_signal_strength( $signal_type, array() );
+		if ( 'High' === $strength ) {
+			return 'strong';
+		}
+		if ( 'Medium' === $strength ) {
+			return 'medium';
+		}
+
+		return 'weak';
+	}
+}
+
+if ( ! function_exists( 'uu_report_plugin_usage_status' ) ) {
+	/**
+	 * Return the tiered truth status for a standalone-plugin context.
+	 *
+	 * @param array<string, mixed> $context     Normalized plugin context.
+	 * @param int|null             $match_count Optional match count.
+	 * @return string
+	 */
+	function uu_report_plugin_usage_status( array $context, $match_count = null ) {
+		if ( ! empty( $context['lookup_error'] ) ) {
+			if ( 'Tracked item is not defined by remote tracker' === (string) $context['lookup_error'] ) {
+				return 'Not Defined By Remote Tracker';
+			}
+
+			return 'Remote Lookup Error';
+		}
+
+		$data        = isset( $context['data'] ) && is_array( $context['data'] ) ? $context['data'] : array();
+		$match_count = null === $match_count ? uu_report_match_count( $data ) : (int) $match_count;
+		$activation  = uu_report_activation_data( $data );
+		$is_active   = ! empty( $activation['network_active'] ) || ! empty( $activation['active_blog_count'] );
+		$strength    = uu_report_plugin_context_signal_strength( $context );
+
+		if ( $match_count > 0 ) {
+			return in_array( $strength, array( 'strong', 'medium' ), true ) ? 'Confirmed Page Match' : 'Weak Signal / Needs Marker';
+		}
+
+		if ( $is_active && in_array( $strength, array( 'missing', 'weak' ), true ) ) {
+			return 'Weak Signal / Needs Marker';
+		}
+
+		if ( $is_active ) {
+			return 'Active, No Page Match';
+		}
+
+		return 'Defined, Not Active';
+	}
+}
+
+if ( ! function_exists( 'uu_report_plugin_action_for_status' ) ) {
+	/**
+	 * Return an action label for a tiered standalone-plugin status.
+	 *
+	 * @param string $status Usage status.
+	 * @return string
+	 */
+	function uu_report_plugin_action_for_status( $status ) {
+		switch ( (string) $status ) {
+			case 'Confirmed Page Match':
+				return 'Keep';
+			case 'Active, No Page Match':
+				return 'Review';
+			case 'Defined, Not Active':
+				return 'Decommission candidate';
+			case 'Not Defined By Remote Tracker':
+				return 'Define';
+			case 'Weak Signal / Needs Marker':
+				return 'Add Marker';
+			case 'Remote Lookup Error':
+			default:
+				return 'Review';
+		}
+	}
+}
+
 if ( ! function_exists( 'uu_report_plugin_summary_row' ) ) {
 	/**
 	 * Build a standalone-plugin summary row from a normalized context.
@@ -581,14 +716,11 @@ if ( ! function_exists( 'uu_report_plugin_summary_row' ) ) {
 		$row = $context['row'];
 
 		if ( ! empty( $context['lookup_error'] ) ) {
-			$define_errors = array(
-				'Missing multisite URL mapping',
-				'Missing Multisite or Tracked Item Slug',
-				'Tracked item is not defined by remote tracker',
-			);
+			$status              = uu_report_plugin_usage_status( $context );
+			$row['Usage Status'] = $status;
 			$row['Lookup Error'] = (string) $context['lookup_error'];
 			$row['Confidence']   = 'Low';
-			$row['Action']       = in_array( $context['lookup_error'], $define_errors, true ) ? 'Define' : 'Review';
+			$row['Action']       = uu_report_plugin_action_for_status( $status );
 			$row['Plugin Activation'] = 'Unknown';
 			$row['Matches Found']     = 'Tracked item is not defined by remote tracker' === $context['lookup_error'] ? 'Not defined' : 'Error';
 			$row['Matched By']        = '';
@@ -598,14 +730,16 @@ if ( ! function_exists( 'uu_report_plugin_summary_row' ) ) {
 
 		$data        = $context['data'];
 		$match_count = uu_report_match_count( $data );
+		$status      = uu_report_plugin_usage_status( $context, $match_count );
 
+		$row['Usage Status']      = $status;
 		$row['Plugin Activation'] = uu_report_activation_label( $data );
 		$row['Matches Found']     = (string) $match_count;
 		$row['Matched By']        = uu_report_match_sources_label( $data );
 		$row['Sample URLs']       = implode( ' | ', uu_report_sample_urls( $data ) );
 		$row['Lookup Error']      = '';
-		$row['Confidence']        = uu_report_default_confidence( $data, $match_count, (string) ( $row['Signal Type'] ?? '' ), 'Needs definition work' === ( $row['Category'] ?? '' ) );
-		$row['Action']            = uu_report_default_action( $data, $match_count, false, 'Needs definition work' === ( $row['Category'] ?? '' ) );
+		$row['Confidence']        = 'Weak Signal / Needs Marker' === $status ? 'Low' : uu_report_default_confidence( $data, $match_count, (string) ( $row['Signal Type'] ?? '' ), 'Needs definition work' === ( $row['Category'] ?? '' ) );
+		$row['Action']            = uu_report_plugin_action_for_status( $status );
 
 		return $row;
 	}
